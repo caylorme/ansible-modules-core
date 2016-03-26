@@ -120,6 +120,12 @@ options:
     default: 'no'
     choices: [ "yes", "no" ]
     version_added: '2.0'
+  synchronous_commit:
+    description:
+      - Specifies whether transaction commit will wait for WAL records to be written to disk before the command returns a "success" indication to the client. Valid values are on, remote_write, local, and off. The default, and safe, setting is on.
+    required: false
+    default: null
+    version_added: "2.1"
 notes:
    - The default authentication assumes that you are either logging in as or
      sudo'ing to the postgres account on the host.
@@ -147,6 +153,10 @@ EXAMPLES = '''
 # Create rails user, grant privilege to create other databases and demote rails from super user status
 - postgresql_user: name=rails password=secret role_attr_flags=CREATEDB,NOSUPERUSER
 
+# Create a user on a cluster with synchronous replication, 
+# but do not wait for the transaction's WAL records to be replicated to the standby server
+- postgresql_db: name=jason password=2nszKEiJeKQPR4Pp role_attr_flags=SUPERUSER synchronous_commit='off'
+
 # Remove test user privileges from acme
 - postgresql_user: db=acme name=test priv=ALL/products:ALL state=absent fail_on_user=no
 
@@ -158,6 +168,7 @@ INSERT,UPDATE/table:SELECT/anothertable:ALL
 
 # Remove an existing user's password
 - postgresql_user: db=test user=test password=NULL
+
 '''
 
 import re
@@ -204,7 +215,7 @@ def user_exists(cursor, user):
     return cursor.rowcount > 0
 
 
-def user_add(cursor, user, password, role_attr_flags, encrypted, expires):
+def user_add(cursor, user, password, role_attr_flags, encrypted, expires, synchronous_commit):
     """Create a new database user (role)."""
     # Note: role_attr_flags escaped by parse_role_attrs and encrypted is a literal
     query_password_data = dict(password=password, expires=expires)
@@ -216,10 +227,12 @@ def user_add(cursor, user, password, role_attr_flags, encrypted, expires):
         query.append("VALID UNTIL %(expires)s")
     query.append(role_attr_flags)
     query = ' '.join(query)
+    if synchronous_commit:
+        query='SET LOCAL synchronous_commit = %(synchronous_commit)s %s' % query
     cursor.execute(query, query_password_data)
     return True
 
-def user_alter(cursor, module, user, password, role_attr_flags, encrypted, expires, no_password_changes):
+def user_alter(cursor, module, user, password, role_attr_flags, encrypted, expires, no_password_changes, synchronous_commit):
     """Change user password and/or attributes. Return True if changed, False otherwise."""
     changed = False
 
@@ -287,9 +300,11 @@ def user_alter(cursor, module, user, password, role_attr_flags, encrypted, expir
             alter.append('WITH %s' % role_attr_flags)
         if expires is not None:
             alter.append("VALID UNTIL %(expires)s")
-
+        alter = ' '.join(alter)
+        if synchronous_commit:
+            alter='SET LOCAL synchronous_commit = %(synchronous_commit)s %s' % alter
         try:
-            cursor.execute(' '.join(alter), query_password_data)
+            cursor.execute(alter, query_password_data)
         except psycopg2.InternalError, e:
             if e.pgcode == '25006':
                 # Handle errors due to read-only transactions indicated by pgcode 25006
@@ -311,11 +326,14 @@ def user_alter(cursor, module, user, password, role_attr_flags, encrypted, expir
 
     return changed
 
-def user_delete(cursor, user):
+def user_delete(cursor, user, synchronous_commit):
     """Try to remove a user. Returns True if successful otherwise False"""
     cursor.execute("SAVEPOINT ansible_pgsql_user_delete")
+    query="DROP USER %s" % pg_quote_identifier(user, 'role')
+    if synchronous_commit:
+      query='SET LOCAL synchronous_commit = %(synchronous_commit)s %s' % query
     try:
-        cursor.execute("DROP USER %s" % pg_quote_identifier(user, 'role'))
+      cursor.execute(query)
     except:
         cursor.execute("ROLLBACK TO SAVEPOINT ansible_pgsql_user_delete")
         cursor.execute("RELEASE SAVEPOINT ansible_pgsql_user_delete")
@@ -350,18 +368,22 @@ def get_table_privileges(cursor, user, table):
     cursor.execute(query, (user, table, schema))
     return frozenset([x[0] for x in cursor.fetchall()])
 
-def grant_table_privileges(cursor, user, table, privs):
+def grant_table_privileges(cursor, user, table, privs, synchronous_commit):
     # Note: priv escaped by parse_privs
     privs = ', '.join(privs)
     query = 'GRANT %s ON TABLE %s TO %s' % (
         privs, pg_quote_identifier(table, 'table'), pg_quote_identifier(user, 'role') )
+    if synchronous_commit:
+         query='SET LOCAL synchronous_commit = %(synchronous_commit)s %s' % query
     cursor.execute(query)
 
-def revoke_table_privileges(cursor, user, table, privs):
+def revoke_table_privileges(cursor, user, table, privs, synchronous_commit):
     # Note: priv escaped by parse_privs
     privs = ', '.join(privs)
     query = 'REVOKE %s ON TABLE %s FROM %s' % (
         privs, pg_quote_identifier(table, 'table'), pg_quote_identifier(user, 'role') )
+    if synchronous_commit:
+         alter='SET LOCAL synchronous_commit = %(synchronous_commit)s %s' % alter
     cursor.execute(query)
 
 def get_database_privileges(cursor, user, db):
@@ -421,6 +443,8 @@ def revoke_database_privileges(cursor, user, db, privs):
         query = 'REVOKE %s ON DATABASE %s FROM %s' % (
                 privs, pg_quote_identifier(db, 'database'),
                 pg_quote_identifier(user, 'role'))
+    if synchronous_commit:
+            query='SET LOCAL synchronous_commit = %(synchronous_commit)s %s' % query
     cursor.execute(query)
 
 def revoke_privileges(cursor, user, privs):
@@ -437,7 +461,7 @@ def revoke_privileges(cursor, user, privs):
             # currently granted to the user
             differences = check_funcs[type_](cursor, user, name, privileges)
             if differences[0]:
-                revoke_funcs[type_](cursor, user, name, privileges)
+                revoke_funcs[type_](cursor, user, name, privileges, synchronous_commit)
                 changed = True
     return changed
 
@@ -458,7 +482,7 @@ def grant_privileges(cursor, user, privs):
             # currently missing
             differences = check_funcs[type_](cursor, user, name, privileges)
             if differences[2]:
-                grant_funcs[type_](cursor, user, name, privileges)
+                grant_funcs[type_](cursor, user, name, privileges, synchronous_commit)
                 changed = True
     return changed
 
@@ -558,7 +582,8 @@ def main():
             role_attr_flags=dict(default=''),
             encrypted=dict(type='bool', default='no'),
             no_password_changes=dict(type='bool', default='no'),
-            expires=dict(default=None)
+            expires=dict(default=None),
+            synchronous_commit=dict(default="on", choices=["on", "remote_write", "local", "off"])
         ),
         supports_check_mode = True
     )
@@ -582,7 +607,7 @@ def main():
     else:
         encrypted = "UNENCRYPTED"
     expires = module.params["expires"]
-
+    synchronous_commit = module.params["synchronous_commit"]
     if not postgresqldb_found:
         module.fail_json(msg="the python psycopg2 module is required")
 
@@ -617,12 +642,12 @@ def main():
     if state == "present":
         if user_exists(cursor, user):
             try:
-                changed = user_alter(cursor, module, user, password, role_attr_flags, encrypted, expires, no_password_changes)
+                changed = user_alter(cursor, module, user, password, role_attr_flags, encrypted, expires, no_password_changes, synchronous_commit)
             except SQLParseError, e:
                 module.fail_json(msg=str(e))
         else:
             try:
-                changed = user_add(cursor, user, password, role_attr_flags, encrypted, expires)
+                changed = user_add(cursor, user, password, role_attr_flags, encrypted, expires, synchronous_commit)
             except SQLParseError, e:
                 module.fail_json(msg=str(e))
         try:
@@ -637,7 +662,7 @@ def main():
             else:
                 try:
                     changed = revoke_privileges(cursor, user, privs)
-                    user_removed = user_delete(cursor, user)
+                    user_removed = user_delete(cursor, user, synchronous_commit)
                 except SQLParseError, e:
                     module.fail_json(msg=str(e))
                 changed = changed or user_removed
