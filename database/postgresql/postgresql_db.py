@@ -111,7 +111,6 @@ EXAMPLES = '''
                  lc_collate='de_DE.UTF-8'
                  lc_ctype='de_DE.UTF-8'
                  template='template0'
-
 # Create a database on a cluster with synchronous replication, 
 # but do not wait for the transaction's WAL records to be replicated to the standby server
 - postgresql_db: name=acme
@@ -138,8 +137,6 @@ def set_owner(cursor, db, owner):
     query = "ALTER DATABASE %s OWNER TO %s" % (
             pg_quote_identifier(db, 'database'),
             pg_quote_identifier(owner, 'role'))
-    if synchronous_commit:
-        query='SET LOCAL synchronous_commit = %(synchronous_commit)s %s' % query
     cursor.execute(query)
     return True
 
@@ -164,17 +161,15 @@ def db_exists(cursor, db):
     cursor.execute(query, {'db': db})
     return cursor.rowcount == 1
 
-def db_delete(cursor, db, synchronous_commit):
+def db_delete(cursor, db):
     if db_exists(cursor, db):
         query = "DROP DATABASE %s" % pg_quote_identifier(db, 'database')
-        if synchronous_commit:
-            query='SET LOCAL synchronous_commit = %(synchronous_commit)s %s' % query
         cursor.execute(query)
         return True
     else:
         return False
 
-def db_create(cursor, db, owner, template, encoding, lc_collate, lc_ctype, synchronous_commit):
+def db_create(cursor, db, owner, template, encoding, lc_collate, lc_ctype):
     params = dict(enc=encoding, collate=lc_collate, ctype=lc_ctype)
     if not db_exists(cursor, db):
         query_fragments = ['CREATE DATABASE %s' % pg_quote_identifier(db, 'database')]
@@ -188,8 +183,6 @@ def db_create(cursor, db, owner, template, encoding, lc_collate, lc_ctype, synch
             query_fragments.append('LC_COLLATE %(collate)s')
         if lc_ctype:
             query_fragments.append('LC_CTYPE %(ctype)s')
-        if synchronous_commit:
-            query_fragments.insert(0,'SET LOCAL synchronous_commit = %(synchronous_commit)s')
         query = ' '.join(query_fragments)
         cursor.execute(query, params)
         return True
@@ -233,6 +226,10 @@ def db_matches(cursor, db, owner, template, encoding, lc_collate, lc_ctype):
         else:
             return True
 
+def set_synchronous_commit(cursor, synchronous_commit):
+    query = "SET SESSION synchronous_commit = %s" % synchronous_commit
+    cursor.execute(query)
+
 # ===========================================
 # Module execution.
 #
@@ -251,7 +248,7 @@ def main():
             encoding=dict(default=""),
             lc_collate=dict(default=""),
             lc_ctype=dict(default=""),
-            synchronous_commit=dict(default="on", choices=["on", "remote_write", "local", "off"]),
+            synchronous_commit=dict(default="", choices=["on", "remote_write", "local", "off"]),
             state=dict(default="present", choices=["absent", "present"]),
         ),
         supports_check_mode = True
@@ -303,6 +300,9 @@ def main():
         module.fail_json(msg="unable to connect to database: %s" % e)
 
     try:
+        if synchronous_commit:
+            set_synchronous_commit(cursor, synchronous_commit)
+
         if module.check_mode:
             if state == "absent":
                 changed = not db_exists(cursor, db)
@@ -313,14 +313,14 @@ def main():
 
         if state == "absent":
             try:
-                changed = db_delete(cursor, db, synchronous_commit)
+                changed = db_delete(cursor, db)
             except SQLParseError, e:
                 module.fail_json(msg=str(e))
 
         elif state == "present":
             try:
                 changed = db_create(cursor, db, owner, template, encoding,
-                                lc_collate, lc_ctype, synchronous_commit)
+                                lc_collate, lc_ctype)
             except SQLParseError, e:
                 module.fail_json(msg=str(e))
     except NotSupportedError, e:
