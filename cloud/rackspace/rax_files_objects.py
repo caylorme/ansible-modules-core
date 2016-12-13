@@ -19,6 +19,10 @@
 
 # This is a DOCUMENTATION stub specific to this module, it extends
 # a documentation fragment located in ansible.utils.module_docs_fragments
+ANSIBLE_METADATA = {'status': ['preview'],
+                    'supported_by': 'community',
+                    'version': '1.0'}
+
 DOCUMENTATION = '''
 ---
 module: rax_files_objects
@@ -102,28 +106,50 @@ EXAMPLES = '''
   gather_facts: False
   tasks:
     - name: "Get objects from test container"
-      rax_files_objects: container=testcont dest=~/Downloads/testcont
+      rax_files_objects:
+        container: testcont
+        dest: ~/Downloads/testcont
 
     - name: "Get single object from test container"
-      rax_files_objects: container=testcont src=file1 dest=~/Downloads/testcont
+      rax_files_objects:
+        container: testcont
+        src: file1
+        dest: ~/Downloads/testcont
 
     - name: "Get several objects from test container"
-      rax_files_objects: container=testcont src=file1,file2,file3 dest=~/Downloads/testcont
+      rax_files_objects:
+        container: testcont
+        src: file1,file2,file3
+        dest: ~/Downloads/testcont
 
     - name: "Delete one object in test container"
-      rax_files_objects: container=testcont method=delete dest=file1
+      rax_files_objects:
+        container: testcont
+        method: delete
+        dest: file1
 
     - name: "Delete several objects in test container"
-      rax_files_objects: container=testcont method=delete dest=file2,file3,file4
+      rax_files_objects:
+        container: testcont
+        method: delete
+        dest: file2,file3,file4
 
     - name: "Delete all objects in test container"
-      rax_files_objects: container=testcont method=delete
+      rax_files_objects:
+        container: testcont
+        method: delete
 
     - name: "Upload all files to test container"
-      rax_files_objects: container=testcont method=put src=~/Downloads/onehundred
+      rax_files_objects:
+        container: testcont
+        method: put
+        src: ~/Downloads/onehundred
 
     - name: "Upload one file to test container"
-      rax_files_objects: container=testcont method=put src=~/Downloads/testcont/file1
+      rax_files_objects:
+        container: testcont
+        method: put
+        src: ~/Downloads/testcont/file1
 
     - name: "Upload one file to test container with metadata"
       rax_files_objects:
@@ -135,14 +161,25 @@ EXAMPLES = '''
           who_uploaded_this: someuser@example.com
 
     - name: "Upload one file to test container with TTL of 60 seconds"
-      rax_files_objects: container=testcont method=put src=~/Downloads/testcont/file3 expires=60
+      rax_files_objects:
+        container: testcont
+        method: put
+        src: ~/Downloads/testcont/file3
+        expires: 60
 
     - name: "Attempt to get remote object that does not exist"
-      rax_files_objects: container=testcont method=get src=FileThatDoesNotExist.jpg dest=~/Downloads/testcont
+      rax_files_objects:
+        container: testcont
+        method: get
+        src: FileThatDoesNotExist.jpg
+        dest: ~/Downloads/testcont
       ignore_errors: yes
 
     - name: "Attempt to delete remote object that does not exist"
-      rax_files_objects: container=testcont method=delete dest=FileThatDoesNotExist.jpg
+      rax_files_objects:
+        container: testcont
+        method: delete
+        dest: FileThatDoesNotExist.jpg
       ignore_errors: yes
 
 - name: "Test Cloud Files Objects Metadata"
@@ -150,10 +187,16 @@ EXAMPLES = '''
   gather_facts: false
   tasks:
     - name: "Get metadata on one object"
-      rax_files_objects:  container=testcont type=meta dest=file2
+      rax_files_objects:
+        container: testcont
+        type: meta
+        dest: file2
 
     - name: "Get metadata on several objects"
-      rax_files_objects:  container=testcont type=meta src=file2,file1
+      rax_files_objects:
+        container: testcont
+        type: meta
+        src: file2,file1
 
     - name: "Set metadata on an object"
       rax_files_objects:
@@ -167,7 +210,10 @@ EXAMPLES = '''
         clear_meta: true
 
     - name: "Verify metadata is set"
-      rax_files_objects:  container=testcont type=meta src=file17
+      rax_files_objects:
+        container: testcont
+        type: meta
+        src: file17
 
     - name: "Delete metadata"
       rax_files_objects:
@@ -180,7 +226,9 @@ EXAMPLES = '''
           key2: ''
 
     - name: "Get metadata on all objects"
-      rax_files_objects:  container=testcont type=meta
+      rax_files_objects:
+        container: testcont
+        type: meta
 '''
 
 try:
@@ -196,7 +244,7 @@ META_PREFIX = 'x-object-meta-'
 def _get_container(module, cf, container):
     try:
         return cf.get_container(container)
-    except pyrax.exc.NoSuchContainer, e:
+    except pyrax.exc.NoSuchContainer as e:
         module.fail_json(msg=e.message)
 
 
@@ -238,17 +286,17 @@ def upload(module, cf, container, src, dest, meta, expires):
     if dest and not is_dir:
         try:
             cont_obj = c.upload_file(src, obj_name=dest, ttl=expires, headers=meta)
-        except Exception, e:
+        except Exception as e:
             module.fail_json(msg=e.message)
     elif is_dir:
         try:
             total_bytes = _upload_folder(cf, src, c, ttl=expires, headers=meta)
-        except Exception, e:
+        except Exception as e:
             module.fail_json(msg=e.message)
     else:
         try:
             cont_obj = c.upload_file(src, ttl=expires, headers=meta)
-        except Exception, e:
+        except Exception as e:
             module.fail_json(msg=e.message)
 
     EXIT_DICT['success'] = True
@@ -299,7 +347,7 @@ def download(module, cf, container, src, dest, structure):
     for obj in objs:
         try:
             c.download_object(obj, dest, structure=structure)
-        except Exception, e:
+        except Exception as e:
             module.fail_json(msg=e.message)
         else:
             results.append(obj)
@@ -348,7 +396,7 @@ def delete(module, cf, container, src, dest):
     for obj in objs:
         try:
             result = c.delete_object(obj)
-        except Exception, e:
+        except Exception as e:
             module.fail_json(msg=e.message)
         else:
             results.append(result)
@@ -396,7 +444,7 @@ def get_meta(module, cf, container, src, dest):
     for obj in objs:
         try:
             meta = c.get_object(obj).get_metadata()
-        except Exception, e:
+        except Exception as e:
             module.fail_json(msg=e.message)
         else:
             results[obj] = dict()
@@ -434,7 +482,7 @@ def put_meta(module, cf, container, src, dest, meta, clear_meta):
     for obj in objs:
         try:
             result = c.get_object(obj).set_metadata(meta, clear=clear_meta)
-        except Exception, e:
+        except Exception as e:
             module.fail_json(msg=e.message)
         else:
             results.append(result)
@@ -473,20 +521,20 @@ def delete_meta(module, cf, container, src, dest, meta):
             for k, v in meta.items():
                 try:
                     result = c.get_object(obj).remove_metadata_key(k)
-                except Exception, e:
+                except Exception as e:
                     module.fail_json(msg=e.message)
                 else:
                     results.append(result)
         else:
             try:
                 o = c.get_object(obj)
-            except pyrax.exc.NoSuchObject, e:
+            except pyrax.exc.NoSuchObject as e:
                 module.fail_json(msg=e.message)
 
             for k, v in o.get_metadata().items():
                 try:
                     result = o.remove_metadata_key(k)
-                except Exception, e:
+                except Exception as e:
                     module.fail_json(msg=e.message)
                 results.append(result)
 
@@ -573,4 +621,6 @@ def main():
 from ansible.module_utils.basic import *
 from ansible.module_utils.rax import *
 
-main()
+
+if __name__ == '__main__':
+    main()

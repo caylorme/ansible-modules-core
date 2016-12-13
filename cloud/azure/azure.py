@@ -14,6 +14,10 @@
 # You should have received a copy of the GNU General Public License
 # along with Ansible.  If not, see <http://www.gnu.org/licenses/>.
 
+ANSIBLE_METADATA = {'status': ['preview'],
+                    'supported_by': 'committer',
+                    'version': '1.0'}
+
 DOCUMENTATION = '''
 ---
 module: azure
@@ -298,7 +302,7 @@ def _delete_disks_when_detached(azure, wait_timeout, disk_names):
                 if disk.attached_to is None:
                     azure.delete_disk(disk.name, True)
                     disk_names.remove(disk_name)
-    except AzureException, e:
+    except AzureException as e:
         module.fail_json(msg="failed to get or delete disk, error was: %s" % (disk_name, str(e)))
     finally:
         signal.alarm(0)
@@ -356,7 +360,7 @@ def create_virtual_machine(module, azure):
             result = azure.create_hosted_service(service_name=name, label=name, location=location)
             _wait_for_completion(azure, result, wait_timeout, "create_hosted_service")
             changed = True
-        except AzureException, e:
+        except AzureException as e:
             module.fail_json(msg="failed to create the new service, error was: %s" % str(e))
 
     try:
@@ -427,13 +431,13 @@ def create_virtual_machine(module, azure):
                                                              virtual_network_name=virtual_network_name)
             _wait_for_completion(azure, result, wait_timeout, "create_virtual_machine_deployment")
             changed = True
-        except AzureException, e:
+        except AzureException as e:
             module.fail_json(msg="failed to create the new virtual machine, error was: %s" % str(e))
 
     try:
         deployment = azure.get_deployment_by_name(service_name=name, deployment_name=name)
         return (changed, urlparse(deployment.url).hostname, deployment)
-    except AzureException, e:
+    except AzureException as e:
         module.fail_json(msg="failed to lookup the deployment information for %s, error was: %s" % (name, str(e)))
 
 
@@ -461,9 +465,9 @@ def terminate_virtual_machine(module, azure):
     disk_names = []
     try:
         deployment = azure.get_deployment_by_name(service_name=name, deployment_name=name)
-    except AzureMissingException, e:
+    except AzureMissingException as e:
         pass  # no such deployment or service
-    except AzureException, e:
+    except AzureException as e:
         module.fail_json(msg="failed to find the deployment, error was: %s" % str(e))
 
     # Delete deployment
@@ -476,28 +480,28 @@ def terminate_virtual_machine(module, azure):
                 role_props = azure.get_role(name, deployment.name, role.role_name)
                 if role_props.os_virtual_hard_disk.disk_name not in disk_names:
                     disk_names.append(role_props.os_virtual_hard_disk.disk_name)
-        except AzureException, e:
+        except AzureException as e:
             module.fail_json(msg="failed to get the role %s, error was: %s" % (role.role_name, str(e)))
 
         try:
             result = azure.delete_deployment(name, deployment.name)
             _wait_for_completion(azure, result, wait_timeout, "delete_deployment")
-        except AzureException, e:
+        except AzureException as e:
             module.fail_json(msg="failed to delete the deployment %s, error was: %s" % (deployment.name, str(e)))
 
-        # It's unclear when disks associated with terminated deployment get detatched.
+        # It's unclear when disks associated with terminated deployment get detached.
         # Thus, until the wait_timeout is reached, we continue to delete disks as they
-        # become detatched by polling the list of remaining disks and examining the state.
+        # become detached by polling the list of remaining disks and examining the state.
         try:
             _delete_disks_when_detached(azure, wait_timeout, disk_names)
-        except (AzureException, TimeoutError), e:
+        except (AzureException, TimeoutError) as e:
             module.fail_json(msg=str(e))
 
         try:
             # Now that the vm is deleted, remove the cloud service
             result = azure.delete_hosted_service(service_name=name)
             _wait_for_completion(azure, result, wait_timeout, "delete_hosted_service")
-        except AzureException, e:
+        except AzureException as e:
             module.fail_json(msg="failed to delete the service %s, error was: %s" % (name, str(e)))
         public_dns_name = urlparse(deployment.url).hostname
 
@@ -535,7 +539,7 @@ def main():
             management_cert_path=dict(),
             endpoints=dict(default='22'),
             user=dict(),
-            password=dict(),
+            password=dict(no_log=True),
             image=dict(),
             virtual_network_name=dict(default=None),
             state=dict(default='present'),
@@ -594,7 +598,7 @@ class Wrapper(object):
         raise AttributeError(name)
 
     def _wrap(self, func, args, kwargs):
-        if type(func) == MethodType:
+        if isinstance(func, MethodType):
             result = self._handle_temporary_redirects(lambda: func(*args, **kwargs))
         else:
             result = self._handle_temporary_redirects(lambda: func(self.other, *args, **kwargs))
@@ -605,7 +609,7 @@ class Wrapper(object):
         while wait_timeout > time.time():
             try:
                 return f()
-            except AzureException, e:
+            except AzureException as e:
                 if not str(e).lower().find("temporary redirect") == -1:
                     time.sleep(5)
                     pass

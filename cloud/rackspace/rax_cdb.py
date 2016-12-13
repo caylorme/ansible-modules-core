@@ -16,6 +16,10 @@
 
 # This is a DOCUMENTATION stub specific to this module, it extends
 # a documentation fragment located in ansible.utils.module_docs_fragments
+ANSIBLE_METADATA = {'status': ['preview'],
+                    'supported_by': 'community',
+                    'version': '1.0'}
+
 DOCUMENTATION = '''
 ---
 module: rax_cdb
@@ -136,7 +140,7 @@ def save_instance(module, name, flavor, volume, cdb_type, cdb_version, wait,
         try:
             instance = cdb.create(name=name, flavor=flavor, volume=volume,
                                   type=cdb_type, version=cdb_version)
-        except Exception, e:
+        except Exception as e:
             module.fail_json(msg='%s' % e.message)
         else:
             changed = True
@@ -187,7 +191,7 @@ def delete_instance(module, name, wait, wait_timeout):
 
     try:
         instance.delete()
-    except Exception, e:
+    except Exception as e:
         module.fail_json(msg='%s' % e.message)
     else:
         changed = True
@@ -258,4 +262,6 @@ from ansible.module_utils.basic import *
 from ansible.module_utils.rax import *
 
 # invoke the module
-main()
+
+if __name__ == '__main__':
+    main()

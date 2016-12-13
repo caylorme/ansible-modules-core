@@ -14,12 +14,16 @@
 # You should have received a copy of the GNU General Public License
 # along with Ansible.  If not, see <http://www.gnu.org/licenses/>.
 
+ANSIBLE_METADATA = {'status': ['stableinterface'],
+                    'supported_by': 'committer',
+                    'version': '1.0'}
+
 DOCUMENTATION = """
 ---
 module: ec2_lc
 short_description: Create or delete AWS Autoscaling Launch Configurations
 description:
-  - Can create or delete AwS Autoscaling Configurations
+  - Can create or delete AWS Autoscaling Configurations
   - Works with the ec2_asg module to manage Autoscaling Groups
 notes:
   - "Amazon ASG Autoscaling Launch Configurations are immutable once created, so modifying the configuration
@@ -53,7 +57,7 @@ options:
     required: false
   security_groups:
     description:
-      - A list of security groups into which instances should be found
+      - A list of security groups to apply to the instances. For VPC instances, specify security group IDs. For EC2-Classic, specify either security group names or IDs.
     required: false
   volumes:
     description:
@@ -126,6 +130,8 @@ EXAMPLES = '''
       device_type: io1
       iops: 3000
       delete_on_termination: true
+    - device_name: /dev/sdb
+      ephemeral: ephemeral0
 
 '''
 
@@ -217,7 +223,7 @@ def create_launch_config(connection, module):
             connection.create_launch_configuration(lc)
             launch_configs = connection.get_all_launch_configurations(names=[name])
             changed = True
-        except BotoServerError, e:
+        except BotoServerError as e:
             module.fail_json(msg=str(e))
 
     result = dict(
@@ -296,7 +302,7 @@ def main():
 
     try:
         connection = connect_to_aws(boto.ec2.autoscale, region, **aws_connect_params)
-    except (boto.exception.NoAuthHandlerFound, AnsibleAWSError), e:
+    except (boto.exception.NoAuthHandlerFound, AnsibleAWSError) as e:
         module.fail_json(msg=str(e))
 
     state = module.params.get('state')
@@ -306,4 +312,5 @@ def main():
     elif state == 'absent':
         delete_launch_config(connection, module)
 
-main()
+if __name__ == '__main__':
+    main()

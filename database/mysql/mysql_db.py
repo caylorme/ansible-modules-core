@@ -19,6 +19,10 @@
 # You should have received a copy of the GNU General Public License
 # along with Ansible.  If not, see <http://www.gnu.org/licenses/>.
 
+ANSIBLE_METADATA = {'status': ['preview'],
+                    'supported_by': 'community',
+                    'version': '1.0'}
+
 DOCUMENTATION = '''
 ---
 module: mysql_db
@@ -48,7 +52,7 @@ options:
     default: null
   encoding:
     description:
-      - Encoding mode
+      - Encoding mode to use, examples include C(utf8) or C(latin1_swedish_ci)
     required: false
     default: null
   target:
@@ -56,23 +60,55 @@ options:
       - Location, on the remote host, of the dump file to read from or write to. Uncompressed SQL
         files (C(.sql)) as well as bzip2 (C(.bz2)), gzip (C(.gz)) and xz (Added in 2.0) compressed files are supported.
     required: false
+  single_transaction:
+    description:
+      - Execute the dump in a single transaction
+    required: false
+    default: false
+    version_added: "2.1"
+  quick:
+    description:
+      - Option used for dumping large tables
+    required: false
+    default: true
+    version_added: "2.1"
 author: "Ansible Core Team"
+requirements:
+   - mysql (command line binary)
+   - mysqldump (command line binary)
+notes:
+   - Requires the python-mysqldb package on the remote host, as well as mysql and mysqldump binaries.
 extends_documentation_fragment: mysql
 '''
 
 EXAMPLES = '''
-# Create a new database with name 'bobdata'
-- mysql_db: name=bobdata state=present
+- name: Create a new database with name 'bobdata'
+  mysql_db:
+    name: bobdata
+    state: present
 
 # Copy database dump file to remote host and restore it to database 'my_db'
-- copy: src=dump.sql.bz2 dest=/tmp
-- mysql_db: name=my_db state=import target=/tmp/dump.sql.bz2
+- name: Copy database dump file
+  copy:
+    src: dump.sql.bz2
+    dest: /tmp
+- name: Restore database
+  mysql_db:
+    name: my_db
+    state: import
+    target: /tmp/dump.sql.bz2
 
-# Dumps all databases to hostname.sql
-- mysql_db: state=dump name=all target=/tmp/{{ inventory_hostname }}.sql
+- name: Dump all databases to hostname.sql
+  mysql_db:
+    state: dump
+    name: all
+    target: /tmp/{{ inventory_hostname }}.sql
 
-# Imports file.sql similiar to mysql -u <username> -p <password> < hostname.sql
-- mysql_db: state=import name=all target=/tmp/{{ inventory_hostname }}.sql
+- name: Import file.sql similar to mysql -u <username> -p <password> < hostname.sql
+  mysql_db:
+    state: import
+    name: all
+    target: /tmp/{{ inventory_hostname }}.sql
 '''
 
 import os
@@ -100,12 +136,11 @@ def db_delete(cursor, db):
     cursor.execute(query)
     return True
 
-def db_dump(module, host, user, password, db_name, target, all_databases, port, config_file, socket=None, ssl_cert=None, ssl_key=None, ssl_ca=None):
+def db_dump(module, host, user, password, db_name, target, all_databases, port, config_file, socket=None, ssl_cert=None, ssl_key=None, ssl_ca=None, single_transaction=None, quick=None):
     cmd = module.get_bin_path('mysqldump', True)
     # If defined, mysqldump demands --defaults-extra-file be the first option
     if config_file:
         cmd += " --defaults-extra-file=%s" % pipes.quote(config_file)
-    cmd += " --quick"
     if user is not None:
         cmd += " --user=%s" % pipes.quote(user)
     if password is not None:
@@ -124,6 +159,10 @@ def db_dump(module, host, user, password, db_name, target, all_databases, port, 
         cmd += " --all-databases"
     else:
         cmd += " %s" % pipes.quote(db_name)
+    if single_transaction:
+        cmd += " --single-transaction=true"
+    if quick:
+        cmd += " --quick"
 
     path = None
     if os.path.splitext(target)[-1] == '.gz':
@@ -212,20 +251,22 @@ def main():
     module = AnsibleModule(
         argument_spec = dict(
             login_user=dict(default=None),
-            login_password=dict(default=None),
+            login_password=dict(default=None, no_log=True),
             login_host=dict(default="localhost"),
             login_port=dict(default=3306, type='int'),
             login_unix_socket=dict(default=None),
             name=dict(required=True, aliases=['db']),
             encoding=dict(default=""),
             collation=dict(default=""),
-            target=dict(default=None),
+            target=dict(default=None, type='path'),
             state=dict(default="present", choices=["absent", "present","dump", "import"]),
-            ssl_cert=dict(default=None),
-            ssl_key=dict(default=None),
-            ssl_ca=dict(default=None),
+            ssl_cert=dict(default=None, type='path'),
+            ssl_key=dict(default=None, type='path'),
+            ssl_ca=dict(default=None, type='path'),
             connect_timeout=dict(default=30, type='int'),
-            config_file=dict(default="~/.my.cnf"),
+            config_file=dict(default="~/.my.cnf", type='path'),
+            single_transaction=dict(default=False, type='bool'),
+            quick=dict(default=True, type='bool'),
         ),
         supports_check_mode=True
     )
@@ -247,14 +288,11 @@ def main():
     ssl_ca = module.params["ssl_ca"]
     connect_timeout = module.params['connect_timeout']
     config_file = module.params['config_file']
-    config_file = os.path.expanduser(os.path.expandvars(config_file))
     login_password = module.params["login_password"]
     login_user = module.params["login_user"]
     login_host = module.params["login_host"]
-
-    # make sure the target path is expanded for ~ and $HOME
-    if target is not None:
-        target = os.path.expandvars(os.path.expanduser(target))
+    single_transaction = module.params["single_transaction"]
+    quick = module.params["quick"]
 
     if state in ['dump','import']:
         if target is None:
@@ -270,7 +308,8 @@ def main():
     try:
         cursor = mysql_connect(module, login_user, login_password, config_file, ssl_cert, ssl_key, ssl_ca,
                                connect_timeout=connect_timeout)
-    except Exception, e:
+    except Exception:
+        e = get_exception()
         if os.path.exists(config_file):
             module.fail_json(msg="unable to connect to database, check login_user and login_password are correct or %s has the credentials. Exception message: %s" % (config_file, e))
         else:
@@ -282,23 +321,27 @@ def main():
     if db_exists(cursor, db):
         if state == "absent":
             if module.check_mode:
-                changed = True
+                module.exit_json(changed=True, db=db)
             else:
                 try:
                     changed = db_delete(cursor, db)
-                except Exception, e:
+                except Exception:
+                    e = get_exception()
                     module.fail_json(msg="error deleting database: " + str(e))
+                module.exit_json(changed=changed, db=db)
+
         elif state == "dump":
             if module.check_mode:
                 module.exit_json(changed=True, db=db)
             else:
                 rc, stdout, stderr = db_dump(module, login_host, login_user,
                                             login_password, db, target, all_databases,
-                                            login_port, config_file, socket, ssl_cert, ssl_key, ssl_ca)
+                                            login_port, config_file, socket, ssl_cert, ssl_key, ssl_ca, single_transaction, quick)
                 if rc != 0:
                     module.fail_json(msg="%s" % stderr)
                 else:
                     module.exit_json(changed=True, db=db, msg=stdout)
+
         elif state == "import":
             if module.check_mode:
                 module.exit_json(changed=True, db=db)
@@ -310,6 +353,12 @@ def main():
                     module.fail_json(msg="%s" % stderr)
                 else:
                     module.exit_json(changed=True, db=db, msg=stdout)
+
+        elif state == "present":
+            if module.check_mode:
+                module.exit_json(changed=False, db=db)
+            module.exit_json(changed=False, db=db)
+
     else:
         if state == "present":
             if module.check_mode:
@@ -317,10 +366,38 @@ def main():
             else:
                 try:
                     changed = db_create(cursor, db, encoding, collation)
-                except Exception, e:
+                except Exception:
+                    e = get_exception()
+                    module.fail_json(msg="error creating database: " + str(e))
+            module.exit_json(changed=changed, db=db)
+
+        elif state == "import":
+            if module.check_mode:
+                module.exit_json(changed=True, db=db)
+            else:
+                try:
+                    changed = db_create(cursor, db, encoding, collation)
+                    if changed:
+                        rc, stdout, stderr = db_import(module, login_host, login_user,
+                                                    login_password, db, target, all_databases,
+                                                    login_port, config_file, socket, ssl_cert, ssl_key, ssl_ca)
+                        if rc != 0:
+                            module.fail_json(msg="%s" % stderr)
+                        else:
+                            module.exit_json(changed=True, db=db, msg=stdout)
+                except Exception:
+                    e = get_exception()
                     module.fail_json(msg="error creating database: " + str(e))
 
-    module.exit_json(changed=changed, db=db)
+        elif state == "absent":
+            if module.check_mode:
+                module.exit_json(changed=False, db=db)
+            module.exit_json(changed=False, db=db)
+
+        elif state == "dump":
+            if module.check_mode:
+                module.exit_json(changed=False, db=db)
+            module.fail_json(msg="Cannot dump database %s - not found" % (db))
 
 # import module snippets
 from ansible.module_utils.basic import *

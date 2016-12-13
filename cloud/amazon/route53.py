@@ -14,6 +14,10 @@
 # You should have received a copy of the GNU General Public License
 # along with Ansible.  If not, see <http://www.gnu.org/licenses/>.
 
+ANSIBLE_METADATA = {'status': ['stableinterface'],
+                    'supported_by': 'community',
+                    'version': '1.0'}
+
 DOCUMENTATION = '''
 ---
 module: route53
@@ -93,7 +97,7 @@ options:
     version_added: "1.9"
   identifier:
     description:
-      - Weighted and latency-based resource record sets only. An identifier
+      - Have to be specified for Weighted, latency-based and failover resource record sets only. An identifier
         that differentiates among multiple resource record sets that have the
         same combination of DNS name and type.
     required: false
@@ -126,7 +130,7 @@ options:
   failover:
     description:
       - Failover resource record sets only. Whether this is the primary or
-        secondary resource record set.
+        secondary resource record set. Allowed values are PRIMARY and SECONDARY
     required: false
     default: null
     version_added: "2.0"
@@ -195,6 +199,16 @@ EXAMPLES = '''
       ttl: "7200"
       value: "::1"
 
+# Add a SRV record with multiple fields for a service on port 22222
+# For more information on SRV records see:
+# https://en.wikipedia.org/wiki/SRV_record
+- route53:
+      command: "create"
+      "zone": "foo.com"
+      "record": "_example-service._tcp.foo.com"
+      "type": "SRV"
+      "value": ["0 0 22222 host1.foo.com", "0 0 22222 host2.foo.com"]
+
 # Add a TXT record. Note that TXT and SPF records must be surrounded
 # by quotes when sent to Route 53:
 - route53:
@@ -207,24 +221,43 @@ EXAMPLES = '''
 
 # Add an alias record that points to an Amazon ELB:
 - route53:
-      command=create
-      zone=foo.com
-      record=elb.foo.com
-      type=A
-      value="{{ elb_dns_name }}"
-      alias=True
-      alias_hosted_zone_id="{{ elb_zone_id }}"
+    command: create
+    zone: foo.com
+    record: elb.foo.com
+    type: A
+    value: "{{ elb_dns_name }}"
+    alias: True
+    alias_hosted_zone_id: "{{ elb_zone_id }}"
+
+# Retrieve the details for elb.foo.com
+- route53:
+      command: get
+      zone: foo.com
+      record: elb.foo.com
+      type: A
+  register: rec
+
+# Delete an alias record using the results from the get command
+- route53:
+      command: delete
+      zone: foo.com
+      record: "{{ rec.set.record }}"
+      ttl: "{{ rec.set.ttl }}"
+      type: "{{ rec.set.type }}"
+      value: "{{ rec.set.value }}"
+      alias: True
+      alias_hosted_zone_id: "{{ rec.set.alias_hosted_zone_id }}"
 
 # Add an alias record that points to an Amazon ELB and evaluates it health:
 - route53:
-      command=create
-      zone=foo.com
-      record=elb.foo.com
-      type=A
-      value="{{ elb_dns_name }}"
-      alias=True
-      alias_hosted_zone_id="{{ elb_zone_id }}"
-      alias_evaluate_target_health=True
+    command: create
+    zone: foo.com
+    record: elb.foo.com
+    type: A
+    value: "{{ elb_dns_name }}"
+    alias: True
+    alias_hosted_zone_id: "{{ elb_zone_id }}"
+    alias_evaluate_target_health: True
 
 # Add an AAAA record with Hosted Zone ID.  Note that because there are colons in the value
 # that the entire parameter list must be quoted:
@@ -263,10 +296,12 @@ EXAMPLES = '''
 
 '''
 
+MINIMUM_BOTO_VERSION = '2.28.0'
 WAIT_RETRY_SLEEP = 5  # how many seconds to wait between propagation status polls
 
 
 import time
+import distutils.version
 
 try:
     import boto
@@ -316,7 +351,7 @@ def commit(changes, retry_interval, wait, wait_timeout):
             retry -= 1
             result = changes.commit()
             break
-        except boto.route53.exception.DNSServerError, e:
+        except boto.route53.exception.DNSServerError as e:
             code = e.body.split("<Code>")[1]
             code = code.split("</Code>")[0]
             if code != 'PriorRequestNotComplete' or retry < 0:
@@ -324,16 +359,16 @@ def commit(changes, retry_interval, wait, wait_timeout):
             time.sleep(float(retry_interval))
 
     if wait:
-      timeout_time = time.time() + wait_timeout
-      connection = changes.connection
-      change = result['ChangeResourceRecordSetsResponse']['ChangeInfo']
-      status = Status(connection, change)
-      while status.status != 'INSYNC' and time.time() < timeout_time:
-        time.sleep(WAIT_RETRY_SLEEP)
-        status.update()
-      if time.time() >= timeout_time:
-        raise TimeoutError()
-    return result
+        timeout_time = time.time() + wait_timeout
+        connection = changes.connection
+        change = result['ChangeResourceRecordSetsResponse']['ChangeInfo']
+        status = Status(connection, change)
+        while status.status != 'INSYNC' and time.time() < timeout_time:
+            time.sleep(WAIT_RETRY_SLEEP)
+            status.update()
+        if time.time() >= timeout_time:
+            raise TimeoutError()
+        return result
 
 # Shamelessly copied over from https://git.io/vgmDG
 IGNORE_CODE = 'Throttling'
@@ -344,7 +379,7 @@ def invoke_with_throttling_retries(function_ref, *argv):
         try:
             retval=function_ref(*argv)
             return retval
-        except boto.exception.BotoServerError, e:
+        except boto.exception.BotoServerError as e:
             if e.code != IGNORE_CODE or retries==MAX_RETRIES:
                 raise e
         time.sleep(5 * (2**retries))
@@ -370,7 +405,7 @@ def main():
             weight                       = dict(required=False, type='int'),
             region                       = dict(required=False),
             health_check                 = dict(required=False),
-            failover                     = dict(required=False),
+            failover                     = dict(required=False,choices=['PRIMARY','SECONDARY']),
             vpc_id                       = dict(required=False),
             wait                         = dict(required=False, type='bool', default=False),
             wait_timeout                 = dict(required=False, type='int', default=300),
@@ -380,6 +415,9 @@ def main():
 
     if not HAS_BOTO:
         module.fail_json(msg='boto required for this module')
+
+    if distutils.version.StrictVersion(boto.__version__) < distutils.version.StrictVersion(MINIMUM_BOTO_VERSION):
+        module.fail_json(msg='Found boto in version %s, but >= %s is required' % (boto.__version__, MINIMUM_BOTO_VERSION))
 
     command_in                      = module.params.get('command')
     zone_in                         = module.params.get('zone').lower()
@@ -406,10 +444,10 @@ def main():
 
     value_list = ()
 
-    if type(value_in) is str:
+    if isinstance(value_in, str):
         if value_in:
             value_list = sorted([s.strip() for s in value_in.split(',')])
-    elif type(value_in)  is list:
+    elif isinstance(value_in, list):
         value_list = sorted(value_in)
 
     if zone_in[-1:] != '.':
@@ -422,10 +460,20 @@ def main():
         if not value_in:
             module.fail_json(msg = "parameter 'value' required for create/delete")
         elif alias_in:
-          if len(value_list) != 1:
-              module.fail_json(msg = "parameter 'value' must contain a single dns name for alias create/delete")
-          elif not alias_hosted_zone_id_in:
-              module.fail_json(msg = "parameter 'alias_hosted_zone_id' required for alias create/delete")
+            if len(value_list) != 1:
+                module.fail_json(msg = "parameter 'value' must contain a single dns name for alias create/delete")
+            elif not alias_hosted_zone_id_in:
+                module.fail_json(msg = "parameter 'alias_hosted_zone_id' required for alias create/delete")
+        elif ( weight_in!=None or region_in!=None or failover_in!=None ) and identifier_in==None:
+            module.fail_json(msg= "If you specify failover, region or weight you must also specify identifier")
+
+    if command_in == 'create':
+        if ( weight_in!=None or region_in!=None or failover_in!=None ) and identifier_in==None:
+          module.fail_json(msg= "If you specify failover, region or weight you must also specify identifier")
+        elif  ( weight_in==None and region_in==None and failover_in==None ) and identifier_in!=None:
+          module.fail_json(msg= "You have specified identifier which makes sense only if you specify one of: weight, region or failover.")
+
+
 
     if vpc_id_in and not private_zone_in:
         module.fail_json(msg="parameter 'private_zone' must be true when specifying parameter"
@@ -435,7 +483,7 @@ def main():
     # connect to the route53 endpoint
     try:
         conn = Route53Connection(**aws_connect_kwargs)
-    except boto.exception.BotoServerError, e:
+    except boto.exception.BotoServerError as e:
         module.fail_json(msg = e.error_message)
 
     # Find the named zone ID
@@ -467,7 +515,10 @@ def main():
         #Need to save this changes in rset, because of comparing rset.to_xml() == wanted_rset.to_xml() in next block
         rset.name = decoded_name
 
-        if rset.type == type_in and decoded_name.lower() == record_in.lower() and str(rset.identifier) == str(identifier_in):
+        if identifier_in is not None:
+            identifier_in = str(identifier_in)
+
+        if rset.type == type_in and decoded_name.lower() == record_in.lower() and rset.identifier == identifier_in:
             found_record = True
             record['zone'] = zone_in
             record['type'] = rset.type
@@ -523,10 +574,13 @@ def main():
 
     try:
         result = invoke_with_throttling_retries(commit, changes, retry_interval_in, wait_in, wait_timeout_in)
-    except boto.route53.exception.DNSServerError, e:
+    except boto.route53.exception.DNSServerError as e:
         txt = e.body.split("<Message>")[1]
         txt = txt.split("</Message>")[0]
-        module.fail_json(msg = txt)
+        if "but it already exists" in txt:
+                module.exit_json(changed=False)
+        else:
+                module.fail_json(msg = txt)
     except TimeoutError:
         module.fail_json(msg='Timeout waiting for changes to replicate')
 
@@ -536,4 +590,5 @@ def main():
 from ansible.module_utils.basic import *
 from ansible.module_utils.ec2 import *
 
-main()
+if __name__ == '__main__':
+    main()

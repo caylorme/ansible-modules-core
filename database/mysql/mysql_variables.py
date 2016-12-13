@@ -22,6 +22,10 @@ You should have received a copy of the GNU General Public License
 along with Ansible.  If not, see <http://www.gnu.org/licenses/>.
 """
 
+ANSIBLE_METADATA = {'status': ['preview'],
+                    'supported_by': 'community',
+                    'version': '1.0'}
+
 DOCUMENTATION = '''
 ---
 module: mysql_variables
@@ -44,14 +48,16 @@ extends_documentation_fragment: mysql
 '''
 EXAMPLES = '''
 # Check for sync_binlog setting
-- mysql_variables: variable=sync_binlog
+- mysql_variables:
+    variable: sync_binlog
 
 # Set read_only variable to 1
-- mysql_variables: variable=read_only value=1
+- mysql_variables:
+    variable: read_only
+    value: 1
 '''
 
 
-import os
 import warnings
 from re import match
 
@@ -110,7 +116,8 @@ def setvariable(cursor, mysqlvar, value):
         cursor.execute(query + "%s", (value,))
         cursor.fetchall()
         result = True
-    except Exception, e:
+    except Exception:
+        e = get_exception()
         result = str(e)
     return result
 
@@ -118,9 +125,9 @@ def main():
     module = AnsibleModule(
             argument_spec = dict(
             login_user=dict(default=None),
-            login_password=dict(default=None),
-            login_host=dict(default="127.0.0.1"),
-            login_port=dict(default="3306", type='int'),
+            login_password=dict(default=None, no_log=True),
+            login_host=dict(default="localhost"),
+            login_port=dict(default=3306, type='int'),
             login_unix_socket=dict(default=None),
             variable=dict(default=None),
             value=dict(default=None),
@@ -128,19 +135,16 @@ def main():
             ssl_key=dict(default=None),
             ssl_ca=dict(default=None),
             connect_timeout=dict(default=30, type='int'),
-            config_file=dict(default="~/.my.cnf")
+            config_file=dict(default="~/.my.cnf", type="path")
         )
     )
     user = module.params["login_user"]
     password = module.params["login_password"]
-    host = module.params["login_host"]
-    port = module.params["login_port"]
     ssl_cert = module.params["ssl_cert"]
     ssl_key = module.params["ssl_key"]
     ssl_ca = module.params["ssl_ca"]
     connect_timeout = module.params['connect_timeout']
     config_file = module.params['config_file']
-    config_file = os.path.expanduser(os.path.expandvars(config_file))
     db = 'mysql'
 
     mysqlvar = module.params["variable"]
@@ -157,7 +161,8 @@ def main():
     try:
         cursor = mysql_connect(module, user, password, config_file, ssl_cert, ssl_key, ssl_ca, db,
                                connect_timeout=connect_timeout)
-    except Exception, e:
+    except Exception:
+        e = get_exception()
         if os.path.exists(config_file):
             module.fail_json(msg="unable to connect to database, check login_user and login_password are correct or %s has the credentials. Exception message: %s" % (config_file, e))
         else:
@@ -176,7 +181,8 @@ def main():
             module.exit_json(msg="Variable already set to requested value", changed=False)
         try:
             result = setvariable(cursor, mysqlvar, value_wanted)
-        except SQLParseError, e:
+        except SQLParseError:
+            e = get_exception()
             result = str(e)
         if result is True:
             module.exit_json(msg="Variable change succeeded prev_value=%s" % value_actual, changed=True)
@@ -187,4 +193,5 @@ def main():
 from ansible.module_utils.basic import *
 from ansible.module_utils.database import *
 from ansible.module_utils.mysql import *
-main()
+if __name__ == '__main__':
+    main()

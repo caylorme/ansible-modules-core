@@ -21,13 +21,17 @@
 # this is a windows documentation stub.  actual code lives in the .ps1
 # file of the same name
 
+ANSIBLE_METADATA = {'status': ['preview'],
+                    'supported_by': 'community',
+                    'version': '1.0'}
+
 DOCUMENTATION = '''
 ---
 module: win_feature
 version_added: "1.7"
-short_description: Installs and uninstalls Windows Features
+short_description: Installs and uninstalls Windows Features on Windows Server
 description:
-     - Installs or uninstalls Windows Roles or Features
+     - Installs or uninstalls Windows Roles or Features on Windows Server. This module uses the Add/Remove-WindowsFeature Cmdlets, which is not available on client os machines.
 options:
   name:
     description:
@@ -49,6 +53,7 @@ options:
       - yes
       - no
     default: null
+    required: false
   include_sub_features:
     description:
       - Adds all subfeatures of the specified feature
@@ -56,6 +61,7 @@ options:
       - yes
       - no
     default: null
+    required: false
   include_management_tools:
     description:
       - Adds the corresponding management tools to the specified feature
@@ -63,6 +69,7 @@ options:
       - yes
       - no
     default: null
+    required: false
   source:
     description:
       - Specify a source to install the feature from
@@ -74,7 +81,7 @@ author:
     - "Trond Hindenes (@trondhindenes)"
 '''
 
-EXAMPLES = '''
+EXAMPLES = r'''
 # This installs IIS.
 # The names of features available for install can be run by running the following Powershell Command:
 # PS C:\Users\Administrator> Import-Module ServerManager; Get-WindowsFeature
@@ -96,6 +103,4 @@ ansible -m "win_feature" -a "name=NET-Framework-Core source=C:/Temp/iso/sources/
         restart: yes
         include_sub_features: yes
         include_management_tools: yes
-
-
 '''

@@ -23,6 +23,10 @@ except ImportError:
     HAS_SHADE = False
 
 
+ANSIBLE_METADATA = {'status': ['preview'],
+                    'supported_by': 'community',
+                    'version': '1.0'}
+
 DOCUMENTATION = '''
 ---
 module: os_security_group
@@ -53,17 +57,17 @@ options:
 EXAMPLES = '''
 # Create a security group
 - os_security_group:
-    cloud=mordred
-    state=present
-    name=foo
-    description=security group for foo servers
+    cloud: mordred
+    state: present
+    name: foo
+    description: security group for foo servers
 
 # Update the existing 'foo' security group description
 - os_security_group:
-    cloud=mordred
-    state=present
-    name=foo
-    description=updated description for the foo security group
+    cloud: mordred
+    state: present
+    name: foo
+    description: updated description for the foo security group
 '''
 
 
@@ -139,4 +143,6 @@ def main():
 # this is magic, see lib/ansible/module_common.py
 from ansible.module_utils.basic import *
 from ansible.module_utils.openstack import *
-main()
+
+if __name__ == "__main__":
+    main()

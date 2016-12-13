@@ -13,6 +13,10 @@
 #
 # You should have received a copy of the GNU General Public License
 # along with Ansible.  If not, see <http://www.gnu.org/licenses/>.
+ANSIBLE_METADATA = {'status': ['preview'],
+                    'supported_by': 'community',
+                    'version': '1.0'}
+
 DOCUMENTATION = '''
 ---
 module: iam_cert
@@ -226,13 +230,13 @@ def main():
         state=dict(
             default=None, required=True, choices=['present', 'absent']),
         name=dict(default=None, required=False),
-        cert=dict(default=None, required=False),
-        key=dict(default=None, required=False),
-        cert_chain=dict(default=None, required=False),
+        cert=dict(default=None, required=False, type='path'),
+        key=dict(default=None, required=False, type='path'),
+        cert_chain=dict(default=None, required=False, type='path'),
         new_name=dict(default=None, required=False),
         path=dict(default='/', required=False),
         new_path=dict(default=None, required=False),
-        dup_ok=dict(default=False, required=False, choices=[False, True])
+        dup_ok=dict(default=False, required=False, type='bool')
     )
     )
 
@@ -251,7 +255,7 @@ def main():
             iam = connect_to_aws(boto.iam, region, **aws_connect_kwargs)
         else:
             iam = boto.iam.connection.IAMConnection(**aws_connect_kwargs)
-    except boto.exception.NoAuthHandlerFound, e:
+    except boto.exception.NoAuthHandlerFound as e:
         module.fail_json(msg=str(e))
 
     state = module.params.get('state')
@@ -286,7 +290,7 @@ def main():
     try:
         cert_action(module, iam, name, path, new_name, new_path, state,
                 cert, key, cert_chain, orig_certs, orig_bodies, dup_ok)
-    except boto.exception.BotoServerError, err:
+    except boto.exception.BotoServerError as err:
         module.fail_json(changed=changed, msg=str(err), debug=[cert,key])
 
 

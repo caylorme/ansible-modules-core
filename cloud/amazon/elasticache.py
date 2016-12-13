@@ -14,6 +14,10 @@
 # You should have received a copy of the GNU General Public License
 # along with Ansible.  If not, see <http://www.gnu.org/licenses/>.
 
+ANSIBLE_METADATA = {'status': ['preview'],
+                    'supported_by': 'community',
+                    'version': '1.0'}
+
 DOCUMENTATION = """
 ---
 module: elasticache
@@ -68,7 +72,7 @@ options:
   cache_subnet_group:
     description:
       - The subnet group name to associate with. Only use if inside a vpc. Required if inside a vpc
-    required: conditional
+    required: false
     default: None
     version_added: "2.0"
   security_group_ids:
@@ -225,10 +229,10 @@ class ElastiCacheManager(object):
                                                       cache_subnet_group_name=self.cache_subnet_group,
                                                       preferred_availability_zone=self.zone,
                                                       port=self.cache_port)
-        except boto.exception.BotoServerError, e:
+        except boto.exception.BotoServerError as e:
             self.module.fail_json(msg=e.message)
-        cache_cluster_data = response['CreateCacheClusterResponse']['CreateCacheClusterResult']['CacheCluster']
-        self._refresh_data(cache_cluster_data)
+
+        self._refresh_data()
 
         self.changed = True
         if self.wait:
@@ -252,7 +256,7 @@ class ElastiCacheManager(object):
 
         try:
             response = self.conn.delete_cache_cluster(cache_cluster_id=self.name)
-        except boto.exception.BotoServerError, e:
+        except boto.exception.BotoServerError as e:
             self.module.fail_json(msg=e.message)
         cache_cluster_data = response['DeleteCacheClusterResponse']['DeleteCacheClusterResult']['CacheCluster']
         self._refresh_data(cache_cluster_data)
@@ -301,11 +305,10 @@ class ElastiCacheManager(object):
                                                   security_group_ids=self.security_group_ids,
                                                   apply_immediately=True,
                                                   engine_version=self.cache_engine_version)
-        except boto.exception.BotoServerError, e:
+        except boto.exception.BotoServerError as e:
             self.module.fail_json(msg=e.message)
 
-        cache_cluster_data = response['ModifyCacheClusterResponse']['ModifyCacheClusterResult']['CacheCluster']
-        self._refresh_data(cache_cluster_data)
+        self._refresh_data()
 
         self.changed = True
         if self.wait:
@@ -330,11 +333,10 @@ class ElastiCacheManager(object):
         try:
             response = self.conn.reboot_cache_cluster(cache_cluster_id=self.name,
                                                       cache_node_ids_to_reboot=cache_node_ids)
-        except boto.exception.BotoServerError, e:
+        except boto.exception.BotoServerError as e:
             self.module.fail_json(msg=e.message)
 
-        cache_cluster_data = response['RebootCacheClusterResponse']['RebootCacheClusterResult']['CacheCluster']
-        self._refresh_data(cache_cluster_data)
+        self._refresh_data()
 
         self.changed = True
         if self.wait:
@@ -384,23 +386,23 @@ class ElastiCacheManager(object):
             'EngineVersion': self.cache_engine_version
         }
         for key, value in modifiable_data.iteritems():
-            if self.data[key] != value:
+            if value is not None and self.data[key] != value:
                 return True
 
         # Check cache security groups
         cache_security_groups = []
         for sg in self.data['CacheSecurityGroups']:
             cache_security_groups.append(sg['CacheSecurityGroupName'])
-            if set(cache_security_groups) - set(self.cache_security_groups):
-                return True
+        if set(cache_security_groups) != set(self.cache_security_groups):
+            return True
 
         # check vpc security groups
         vpc_security_groups = []
         security_groups = self.data['SecurityGroups'] or []
         for sg in security_groups:
             vpc_security_groups.append(sg['SecurityGroupId'])
-            if set(vpc_security_groups) - set(self.security_group_ids):
-                return True
+        if set(vpc_security_groups) != set(self.security_group_ids):
+            return True
 
         return False
 
@@ -417,7 +419,7 @@ class ElastiCacheManager(object):
         if self.zone is not None:
             unmodifiable_data['zone'] = self.data['PreferredAvailabilityZone']
         for key, value in unmodifiable_data.iteritems():
-            if getattr(self, key) != value:
+            if getattr(self, key) is not None and getattr(self, key) != value:
                 return True
         return False
 
@@ -430,7 +432,7 @@ class ElastiCacheManager(object):
                 region=connect_region,
                 **self.aws_connect_kwargs
             )
-        except boto.exception.NoAuthHandlerFound, e:
+        except boto.exception.NoAuthHandlerFound as e:
             self.module.fail_json(msg=e.message)
 
     def _get_port(self):
@@ -556,4 +558,5 @@ def main():
 from ansible.module_utils.basic import *
 from ansible.module_utils.ec2 import *
 
-main()
+if __name__ == '__main__':
+    main()

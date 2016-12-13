@@ -24,6 +24,10 @@ except ImportError:
 
 from distutils.version import StrictVersion
 
+ANSIBLE_METADATA = {'status': ['preview'],
+                    'supported_by': 'community',
+                    'version': '1.0'}
+
 DOCUMENTATION = '''
 ---
 module: os_ironic_node
@@ -365,4 +369,6 @@ def main():
 # this is magic, see lib/ansible/module_common.py
 from ansible.module_utils.basic import *
 from ansible.module_utils.openstack import *
-main()
+
+if __name__ == "__main__":
+    main()

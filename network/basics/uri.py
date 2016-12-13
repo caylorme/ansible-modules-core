@@ -20,15 +20,9 @@
 #
 # see examples/playbooks/uri.yml
 
-import cgi
-import shutil
-import tempfile
-import datetime
-
-try:
-    import json
-except ImportError:
-    import simplejson as json
+ANSIBLE_METADATA = {'status': ['stableinterface'],
+                    'supported_by': 'core',
+                    'version': '1.0'}
 
 DOCUMENTATION = '''
 ---
@@ -63,7 +57,7 @@ options:
   body:
     description:
       - The body of the http request/response to the web service. If C(body_format) is set
-        to 'json' it will take an already formated JSON string or convert a data structure
+        to 'json' it will take an already formatted JSON string or convert a data structure
         into JSON.
     required: false
     default: null
@@ -163,20 +157,24 @@ author: "Romeo Theriault (@romeotheriault)"
 '''
 
 EXAMPLES = '''
-# Check that you can connect (GET) to a page and it returns a status 200
-- uri: url=http://www.example.com
+- name: Check that you can connect (GET) to a page and it returns a status 200
+  uri:
+    url: http://www.example.com
 
 # Check that a page returns a status 200 and fail if the word AWESOME is not
 # in the page contents.
-- action: uri url=http://www.example.com return_content=yes
+- uri:
+    url: http://www.example.com
+    return_content: yes
   register: webpage
 
-- action: fail
+- name: Fail if AWESOME is not in the page content
+  fail:
   when: "'AWESOME' not in webpage.content"
 
 
-# Create a JIRA issue
-- uri:
+- name: Create a JIRA issue
+  uri:
     url: https://your.jira.example.com/rest/api/2/issue/
     method: POST
     user: your_username
@@ -203,8 +201,8 @@ EXAMPLES = '''
     return_content: yes
     HEADER_Cookie: "{{login.set_cookie}}"
 
-# Queue build of a project in Jenkins:
-- uri:
+- name: Queue build of a project in Jenkins
+  uri:
     url: "http://{{ jenkins.host }}/job/{{ jenkins.job }}/build?token={{ jenkins.token }}"
     method: GET
     user: "{{ jenkins.user }}"
@@ -214,6 +212,23 @@ EXAMPLES = '''
 
 '''
 
+import cgi
+import datetime
+import os
+import shutil
+import tempfile
+
+try:
+    import json
+except ImportError:
+    import simplejson as json
+
+from ansible.module_utils.basic import AnsibleModule
+from ansible.module_utils.pycompat24 import get_exception
+import ansible.module_utils.six as six
+from ansible.module_utils._text import to_text
+from ansible.module_utils.urls import fetch_url, url_argument_spec
+
 
 def write_file(module, url, dest, content):
     # create a tempfile with some test content
@@ -221,7 +236,8 @@ def write_file(module, url, dest, content):
     f = open(tmpsrc, 'wb')
     try:
         f.write(content)
-    except Exception, err:
+    except Exception:
+        err = get_exception()
         os.remove(tmpsrc)
         module.fail_json(msg="failed to create temporary content file: %s" % str(err))
     f.close()
@@ -256,7 +272,8 @@ def write_file(module, url, dest, content):
     if checksum_src != checksum_dest:
         try:
             shutil.copyfile(tmpsrc, dest)
-        except Exception, err:
+        except Exception:
+            err = get_exception()
             os.remove(tmpsrc)
             module.fail_json(msg="failed to copy %s to %s: %s" % (tmpsrc, dest, str(err)))
 
@@ -264,7 +281,7 @@ def write_file(module, url, dest, content):
 
 
 def url_filename(url):
-    fn = os.path.basename(urlparse.urlsplit(url)[2])
+    fn = os.path.basename(six.moves.urllib.parse.urlsplit(url)[2])
     if fn == '':
         return 'index.html'
     return fn
@@ -279,7 +296,7 @@ def absolute_location(url, location):
         return location
 
     elif location.startswith('/'):
-        parts = urlparse.urlsplit(url)
+        parts = six.moves.urllib.parse.urlsplit(url)
         base = url.replace(parts[2], '')
         return '%s%s' % (base, location)
 
@@ -326,13 +343,18 @@ def uri(module, url, dest, body, body_format, method, headers, socket_timeout):
 
     resp, info = fetch_url(module, url, data=body, headers=headers,
                            method=method, timeout=socket_timeout)
-    r['redirected'] = redirected or info['url'] != url
-    r.update(redir_info)
-    r.update(info)
+
     try:
         content = resp.read()
     except AttributeError:
-        content = ''
+        # there was no content, but the error read()
+        # may have been stored in the info as 'body'
+        content = info.pop('body', '')
+
+    r['redirected'] = redirected or info['url'] != url
+    r.update(redir_info)
+    r.update(info)
+
     return r, content, dest
 
 
@@ -374,14 +396,14 @@ def main():
     dict_headers = module.params['headers']
 
     if body_format == 'json':
-        # Encode the body unless its a string, then assume it is preformatted JSON
+        # Encode the body unless its a string, then assume it is pre-formatted JSON
         if not isinstance(body, basestring):
             body = json.dumps(body)
         dict_headers['Content-Type'] = 'application/json'
 
     # Grab all the http headers. Need this hack since passing multi-values is
     # currently a bit ugly. (e.g. headers='{"Content-Type":"application/json"}')
-    for key, value in module.params.iteritems():
+    for key, value in six.iteritems(module.params):
         if key.startswith("HEADER_"):
             skey = key.replace("HEADER_", "")
             dict_headers[skey] = value
@@ -424,9 +446,11 @@ def main():
 
     # Transmogrify the headers, replacing '-' with '_', since variables dont
     # work with dashes.
+    # In python3, the headers are title cased.  Lowercase them to be
+    # compatible with the python2 behaviour.
     uresp = {}
-    for key, value in resp.iteritems():
-        ukey = key.replace("-", "_")
+    for key, value in six.iteritems(resp):
+        ukey = key.replace("-", "_").lower()
         uresp[ukey] = value
 
     try:
@@ -440,16 +464,15 @@ def main():
         content_type, params = cgi.parse_header(uresp['content_type'])
         if 'charset' in params:
             content_encoding = params['charset']
-        u_content = unicode(content, content_encoding, errors='replace')
-        if content_type.startswith('application/json') or \
-                content_type.startswith('text/json'):
+        u_content = to_text(content, encoding=content_encoding)
+        if 'application/json' in content_type or 'text/json' in content_type:
             try:
                 js = json.loads(u_content)
                 uresp['json'] = js
             except:
                 pass
     else:
-        u_content = unicode(content, content_encoding, errors='replace')
+        u_content = to_text(content, encoding=content_encoding)
 
     if resp['status'] not in status_code:
         uresp['msg'] = 'Status code was not %s: %s' % (status_code, uresp.get('msg', ''))
@@ -459,10 +482,6 @@ def main():
     else:
         module.exit_json(changed=changed, **uresp)
 
-
-# import module snippets
-from ansible.module_utils.basic import *
-from ansible.module_utils.urls import *
 
 if __name__ == '__main__':
     main()
